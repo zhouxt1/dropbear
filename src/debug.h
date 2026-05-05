@@ -88,8 +88,12 @@ extern int debug_trace;
 
 /* To debug with GDB it is easier to run with no forking of child processes.
    You will need to pass "-F" as well. */
+/* Forced on in this fork so AFLNet sees the protocol handler in the same
+   PID as the listener — matches the "handle one connection then exit"
+   model that OpenSSH gives via `sshd -d` and TinySSH via its in-binary
+   listener. Pass `-F` on the command line. */
 #ifndef DEBUG_NOFORK
-#define DEBUG_NOFORK 0
+#define DEBUG_NOFORK 1
 #endif
 
 
