@@ -309,34 +309,48 @@ void seedrandom() {
 	write_urandom();
 }
 
-/* return len bytes of pseudo-random data */
+/* ==========================================================================
+ *  FUZZING VARIANT: WITHOUT RANDOMNESS  (deterministic xorshift64 PRNG)
+ * ==========================================================================
+ *
+ *  This is the AFL-friendly variant of genrandom(). It returns a fixed,
+ *  deterministic byte stream from a fixed-seed xorshift64 PRNG so every run
+ *  of dropbear with the same fuzz input takes the same code path — required
+ *  for high AFL coverage stability.
+ *
+ *  Every consumer of randomness in DropBear (KEX cookie, x25519 ephemeral,
+ *  ed25519/dss/rsa nonces, padding, auth delay, channel prefixes,
+ *  libtomcrypt PRNG via crypto_desc.c) routes through genrandom(), so this
+ *  single function controls determinism for the whole server. The existing
+ *  seedrandom() machinery (/dev/urandom, /proc/*, getpid, gettimeofday,
+ *  clock) still runs but its output is no longer consumed — the
+ *  `donerandinit` flag it sets is preserved so the original call ordering
+ *  invariants still hold.
+ *
+ *  To switch back to the original SHA256-pool PRNG, revert this hunk.
+ * ========================================================================== */
 void genrandom(unsigned char* buf, unsigned int len) {
 
-	hash_state hs;
-	unsigned char hash[SHA256_HASH_SIZE];
-	unsigned int copylen;
+	static unsigned long long fuzz_prng_state = 0x123456789abcdef0ULL;
 
 	if (!donerandinit) {
 		dropbear_exit("seedrandom not done");
 	}
 
 	while (len > 0) {
-		sha256_init(&hs);
-		sha256_process(&hs, (void*)hashpool, sizeof(hashpool));
-		sha256_process(&hs, (void*)&counter, sizeof(counter));
-		sha256_done(&hs, hash);
-
-		counter++;
-		if (counter > MAX_COUNTER) {
-			seedrandom();
+		unsigned long long x = fuzz_prng_state;
+		x ^= x << 13;
+		x ^= x >> 7;
+		x ^= x << 17;
+		fuzz_prng_state = x;
+		unsigned int n = (len < 8) ? len : 8;
+		unsigned int j;
+		for (j = 0; j < n; j++) {
+			buf[j] = (unsigned char)(x >> (j * 8));
 		}
-
-		copylen = MIN(len, SHA256_HASH_SIZE);
-		memcpy(buf, hash, copylen);
-		len -= copylen;
-		buf += copylen;
+		buf += n;
+		len -= n;
 	}
-	m_burn(hash, sizeof(hash));
 }
 
 /* Generates a random mp_int. 
